@@ -161,31 +161,11 @@ export default function SongGuesser() {
   useEffect(() => {
     (async () => {
       try {
-        // Artist ID 210087302 = "No Te Va Gustar" on iTunes
-        const r2 = await fetch(
-          'https://itunes.apple.com/lookup?id=210087302&entity=song&limit=200'
-        );
-        const d2 = await r2.json();
-
-        const seen = new Set<string>();
-        const list: Song[] = (d2.results as any[])
-          .filter(r => r.wrapperType === 'track' && r.previewUrl)
-          .filter(r => {
-            const k = r.trackName.toLowerCase().trim();
-            if (seen.has(k)) return false;
-            seen.add(k);
-            return true;
-          })
-          .map(r => ({
-            trackId:      r.trackId,
-            trackName:    r.trackName,
-            collectionName: r.collectionName || 'Álbum desconocido',
-            previewUrl:   r.previewUrl,
-            artworkUrl100: r.artworkUrl100 || '',
-          }));
-
-        if (list.length < OPTIONS_COUNT) throw new Error('Pocas canciones con preview disponibles');
-
+        // songs.json is in /public — served at the site root (base-path-aware via import.meta.env.BASE_URL)
+        const res = await fetch(`${import.meta.env.BASE_URL}songs.json`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const list: Song[] = await res.json();
+        if (list.length < OPTIONS_COUNT) throw new Error('Pocas canciones disponibles');
         setSongs(list);
         setPhase('home');
       } catch (e) {
