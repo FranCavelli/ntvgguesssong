@@ -328,7 +328,7 @@ export default function SongGuesser() {
             <div className="text-center mb-10">
               <SoundBars active={false} />
               <h1 className="mt-5 text-4xl font-black tracking-tight">¿Adivinas la canción?</h1>
-              <p className="mt-2 text-orange-400 font-semibold text-lg">No Te Va a Gustar</p>
+              <p className="mt-2 text-orange-400 font-semibold text-lg">No Te Va Gustar</p>
               {songs.length > 0 && (
                 <p className="mt-1 text-zinc-600 text-sm">{songs.length} canciones disponibles</p>
               )}
