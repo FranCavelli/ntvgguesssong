@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import songsJson from '../data/songs.json';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -12,6 +12,7 @@ interface Song {
 }
 
 type Phase = 'loading' | 'home' | 'playing' | 'guessing' | 'revealed' | 'gameover';
+type Mode  = 'classic' | 'infinite';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -26,6 +27,11 @@ type DifficultyId = (typeof DIFFICULTIES)[number]['id'];
 
 const TOTAL_ROUNDS = 10;
 const OPTIONS_COUNT = 4;
+
+const INFINITE_START_SECONDS = 5;
+const INFINITE_MIN_SECONDS   = 1;
+const INFINITE_STEP          = 5; // aciertos necesarios para bajar 1s
+const HIGH_SCORE_KEY         = 'ntvg-infinite-highscore';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -46,6 +52,13 @@ function pickOptions(songs: Song[], correct: Song): Song[] {
 function artUrl(url: string, size = 400): string {
   if (!url) return '';
   return url.replace('100x100bb', `${size}x${size}bb`);
+}
+
+function infiniteSecondsFor(score: number): number {
+  return Math.max(
+    INFINITE_MIN_SECONDS,
+    INFINITE_START_SECONDS - Math.floor(score / INFINITE_STEP),
+  );
 }
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
@@ -138,6 +151,7 @@ function OptionBtn({
 export default function SongGuesser() {
   const [songs,      setSongs]      = useState<Song[]>(songsJson as Song[]);
   const [phase,      setPhase]      = useState<Phase>('home');
+  const [mode,       setMode]       = useState<Mode>('classic');
   const [diffId,     setDiffId]     = useState<DifficultyId>('normal');
   const [current,    setCurrent]    = useState<Song | null>(null);
   const [options,    setOptions]    = useState<Song[]>([]);
@@ -150,14 +164,22 @@ export default function SongGuesser() {
   const [timeLeft,   setTimeLeft]   = useState(0);
   const [error,      setError]      = useState<string | null>(null);
   const [usedIds,    setUsedIds]    = useState<Set<number>>(new Set());
+  const [highScore,  setHighScore]  = useState(0);
+  const [isNewRecord, setIsNewRecord] = useState(false);
 
-  const audioRef    = useRef<HTMLAudioElement>(null);
-  const stopRef     = useRef<number | undefined>(undefined);
-  const tickRef     = useRef<number | undefined>(undefined);
+  const audioRef = useRef<HTMLAudioElement>(null);
+  const stopRef  = useRef<number | undefined>(undefined);
+  const tickRef  = useRef<number | undefined>(undefined);
 
   const diff = DIFFICULTIES.find(d => d.id === diffId)!;
 
-  // Songs are bundled at build time via the JSON import — no fetch needed
+  // Load high score once on mount
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(HIGH_SCORE_KEY);
+      if (saved) setHighScore(parseInt(saved, 10) || 0);
+    } catch {}
+  }, []);
 
   // ── Audio ─────────────────────────────────────────────────────────────────
 
@@ -169,7 +191,12 @@ export default function SongGuesser() {
     setTimeLeft(0);
   }, []);
 
-  const playClip = useCallback((url: string, onDone: () => void) => {
+  const playClip = useCallback((
+    url: string,
+    seconds: number,
+    randomOffset: boolean,
+    onDone: () => void,
+  ) => {
     const audio = audioRef.current;
     if (!audio) return;
 
@@ -177,24 +204,21 @@ export default function SongGuesser() {
     clearInterval(tickRef.current);
     audio.pause();
 
-    const offset = diff.randomOffset ? Math.floor(Math.random() * 15) + 5 : 0;
+    const offset = randomOffset ? Math.floor(Math.random() * 15) + 5 : 0;
     setIsPlaying(true);
-    setTimeLeft(diff.seconds);
+    setTimeLeft(seconds);
 
     audio.src = url;
-    // seek once metadata arrives (hard/extreme modes start mid-song)
     if (offset > 0) {
       audio.addEventListener('loadedmetadata', () => {
         audio.currentTime = offset;
       }, { once: true });
     }
 
-    // play() MUST be called synchronously in the user-gesture call stack
-    // so the browser autoplay policy allows it; timer starts in the resolved promise
     const promise = audio.play();
 
     const startTimer = () => {
-      let remaining = diff.seconds;
+      let remaining = seconds;
       tickRef.current = window.setInterval(() => {
         remaining -= 0.1;
         setTimeLeft(Math.max(0, remaining));
@@ -205,7 +229,7 @@ export default function SongGuesser() {
         setIsPlaying(false);
         setTimeLeft(0);
         onDone();
-      }, diff.seconds * 1000);
+      }, seconds * 1000);
     };
 
     if (promise !== undefined) {
@@ -216,17 +240,29 @@ export default function SongGuesser() {
     } else {
       startTimer();
     }
-  }, [diff]);
+  }, []);
 
   // ── Game logic ─────────────────────────────────────────────────────────────
 
-  const launchRound = useCallback((allSongs: Song[], roundNum: number, usedSet: Set<number>) => {
-    if (roundNum >= TOTAL_ROUNDS) {
+  const launchRound = useCallback((
+    allSongs: Song[],
+    roundNum: number,
+    usedSet: Set<number>,
+    currentScore: number,
+  ) => {
+    if (mode === 'classic' && roundNum >= TOTAL_ROUNDS) {
       setPhase('gameover');
       return;
     }
-    const pool = allSongs.filter(s => !usedSet.has(s.trackId));
-    const src  = pool.length >= OPTIONS_COUNT ? pool : allSongs;
+
+    const secs   = mode === 'infinite' ? infiniteSecondsFor(currentScore) : diff.seconds;
+    const randOf = mode === 'infinite' ? false : diff.randomOffset;
+
+    // If we ran out of unused songs, reset the pool to keep infinite mode going
+    const pool        = allSongs.filter(s => !usedSet.has(s.trackId));
+    const src         = pool.length >= OPTIONS_COUNT ? pool : allSongs;
+    const nextUsedSet = pool.length >= OPTIONS_COUNT ? usedSet : new Set<number>();
+
     const song = shuffle(src)[0]!;
     const opts = pickOptions(allSongs, song);
 
@@ -234,17 +270,17 @@ export default function SongGuesser() {
     setOptions(opts);
     setSelectedId(null);
     setRound(roundNum);
-    setUsedIds(new Set([...usedSet, song.trackId]));
+    setUsedIds(new Set([...nextUsedSet, song.trackId]));
     setPhase('playing');
-    playClip(song.previewUrl, () => setPhase('guessing'));
-  }, [playClip]);
+    playClip(song.previewUrl, secs, randOf, () => setPhase('guessing'));
+  }, [mode, diff, playClip]);
 
   const startGame = useCallback(() => {
     setScore(0);
     setStreak(0);
     setMaxStreak(0);
-    const empty = new Set<number>();
-    launchRound(songs, 0, empty);
+    setIsNewRecord(false);
+    launchRound(songs, 0, new Set<number>(), 0);
   }, [songs, launchRound]);
 
   const handleSelect = useCallback((song: Song) => {
@@ -262,48 +298,68 @@ export default function SongGuesser() {
       setMaxStreak(m => Math.max(m, ns));
     } else {
       setStreak(0);
+
+      if (mode === 'infinite') {
+        // Persist record now; game ends after the reveal
+        if (score > highScore) {
+          setHighScore(score);
+          setIsNewRecord(true);
+          try { localStorage.setItem(HIGH_SCORE_KEY, String(score)); } catch {}
+        }
+      }
     }
 
-    // Let user hear the full preview from start
     if (audioRef.current && current) {
       audioRef.current.currentTime = 0;
       audioRef.current.play().catch(() => {});
     }
-  }, [phase, current, streak, stopAudio]);
+  }, [phase, current, streak, stopAudio, mode, score, highScore]);
 
   const nextRound = useCallback(() => {
     stopAudio();
-    launchRound(songs, round + 1, usedIds);
-  }, [songs, round, usedIds, launchRound, stopAudio]);
+    // In infinite mode, a wrong answer ends the game
+    if (mode === 'infinite' && selectedId !== null && selectedId !== current?.trackId) {
+      setPhase('gameover');
+      return;
+    }
+    launchRound(songs, round + 1, usedIds, score);
+  }, [songs, round, usedIds, launchRound, stopAudio, mode, selectedId, current, score]);
 
   const replayClip = useCallback(() => {
     if (!current || phase !== 'guessing') return;
+    const secs   = mode === 'infinite' ? infiniteSecondsFor(score) : diff.seconds;
+    const randOf = mode === 'infinite' ? false : diff.randomOffset;
     setPhase('playing');
-    playClip(current.previewUrl, () => setPhase('guessing'));
-  }, [current, phase, playClip]);
+    playClip(current.previewUrl, secs, randOf, () => setPhase('guessing'));
+  }, [current, phase, playClip, mode, score, diff]);
 
   const goHome = useCallback(() => {
     stopAudio();
     setPhase('home');
   }, [stopAudio]);
 
-  // ── Render ─────────────────────────────────────────────────────────────────
-  // <audio> is always in the DOM so audioRef.current is never null when
-  // playClip() is called synchronously from a button click handler
+  // ── Render helpers ─────────────────────────────────────────────────────────
 
   const isCorrect = selectedId === current?.trackId;
 
+  const currentSeconds = mode === 'infinite' ? infiniteSecondsFor(score) : diff.seconds;
+
   const pct = score / TOTAL_ROUNDS;
   const [goEmoji, goTitle, goMsg] =
-    pct === 1  ? ['🏆', '¡Perfecto!',       'Sos un verdadero fanático de NTVG'] :
-    pct >= 0.8 ? ['🌟', '¡Excelente!',       'Conocés muy bien la discografía']  :
-    pct >= 0.6 ? ['👏', '¡Bien!',            'Buen conocimiento musical']         :
-    pct >= 0.4 ? ['😎', 'Pasable',           'Hay que escuchar más NTVG']         :
-                 ['🎵', 'Seguí intentando',  'Ponete los auriculares y practicá'];
+    mode === 'infinite'
+      ? (score >= 20 ? ['👑', '¡Leyenda!',       'Dominás el repertorio']
+        : score >= 10 ? ['🌟', '¡Muy bien!',       'Buen oído para NTVG']
+        : score >=  5 ? ['🎵', 'Nada mal',         'Podés mejorar tu récord']
+        : score >    0 ? ['😎', 'Seguí probando',   'La próxima salís más lejos']
+        :                ['💀', 'Ouch',             'Arrancamos mal, pero dale de nuevo'])
+      : (pct === 1  ? ['🏆', '¡Perfecto!',       'Sos un verdadero fanático de NTVG']
+      :  pct >= 0.8 ? ['🌟', '¡Excelente!',      'Conocés muy bien la discografía']
+      :  pct >= 0.6 ? ['👏', '¡Bien!',           'Buen conocimiento musical']
+      :  pct >= 0.4 ? ['😎', 'Pasable',          'Hay que escuchar más NTVG']
+      :               ['🎵', 'Seguí intentando', 'Ponete los auriculares y practicá']);
 
   return (
     <div className="min-h-screen bg-zinc-950 text-white">
-      {/* Audio always mounted so the ref is ready before any phase transition */}
       <audio ref={audioRef} />
 
       {/* ── Loading ── */}
@@ -325,7 +381,7 @@ export default function SongGuesser() {
                 {error}
               </div>
             )}
-            <div className="text-center mb-10">
+            <div className="text-center mb-8">
               <SoundBars active={false} />
               <h1 className="mt-5 text-4xl font-black tracking-tight">¿Adivinas la canción?</h1>
               <p className="mt-2 text-orange-400 font-semibold text-lg">No Te Va Gustar</p>
@@ -333,27 +389,83 @@ export default function SongGuesser() {
                 <p className="mt-1 text-zinc-600 text-sm">{songs.length} canciones disponibles</p>
               )}
             </div>
-            <div className="mb-8">
+
+            {/* Mode selector */}
+            <div className="mb-5">
               <p className="text-xs text-zinc-500 uppercase tracking-widest text-center mb-3">
-                Dificultad
+                Modo
               </p>
-              <div className="grid grid-cols-4 gap-2">
-                {DIFFICULTIES.map(d => (
-                  <button
-                    key={d.id}
-                    onClick={() => setDiffId(d.id)}
-                    className={`py-3 rounded-xl font-bold text-sm transition-all ${
-                      diffId === d.id
-                        ? 'bg-orange-500 text-white shadow-lg'
-                        : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700 hover:text-white'
-                    }`}
-                  >
-                    <div>{d.label}</div>
-                    <div className="text-xs font-normal opacity-70 mt-0.5">{d.seconds}s</div>
-                  </button>
-                ))}
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  onClick={() => setMode('classic')}
+                  className={`py-3 rounded-xl font-bold text-sm transition-all ${
+                    mode === 'classic'
+                      ? 'bg-orange-500 text-white shadow-lg'
+                      : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700 hover:text-white'
+                  }`}
+                >
+                  <div>Clásico</div>
+                  <div className="text-xs font-normal opacity-70 mt-0.5">{TOTAL_ROUNDS} rondas</div>
+                </button>
+                <button
+                  onClick={() => setMode('infinite')}
+                  className={`py-3 rounded-xl font-bold text-sm transition-all ${
+                    mode === 'infinite'
+                      ? 'bg-orange-500 text-white shadow-lg'
+                      : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700 hover:text-white'
+                  }`}
+                >
+                  <div>Infinito ∞</div>
+                  <div className="text-xs font-normal opacity-70 mt-0.5">Hasta fallar</div>
+                </button>
               </div>
             </div>
+
+            {/* Classic: difficulty selector */}
+            {mode === 'classic' && (
+              <div className="mb-8">
+                <p className="text-xs text-zinc-500 uppercase tracking-widest text-center mb-3">
+                  Dificultad
+                </p>
+                <div className="grid grid-cols-4 gap-2">
+                  {DIFFICULTIES.map(d => (
+                    <button
+                      key={d.id}
+                      onClick={() => setDiffId(d.id)}
+                      className={`py-3 rounded-xl font-bold text-sm transition-all ${
+                        diffId === d.id
+                          ? 'bg-orange-500 text-white shadow-lg'
+                          : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700 hover:text-white'
+                      }`}
+                    >
+                      <div>{d.label}</div>
+                      <div className="text-xs font-normal opacity-70 mt-0.5">{d.seconds}s</div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Infinite: rules + record */}
+            {mode === 'infinite' && (
+              <div className="mb-8 space-y-3">
+                <div className="p-4 bg-gradient-to-br from-orange-950/40 to-zinc-900 border border-orange-900/50 rounded-xl text-center">
+                  <div className="text-xs text-zinc-500 uppercase tracking-widest mb-1">
+                    Récord
+                  </div>
+                  <div className="text-4xl font-black text-orange-400 tabular-nums">
+                    {highScore}
+                  </div>
+                  <div className="text-xs text-zinc-500 mt-0.5">aciertos seguidos</div>
+                </div>
+                <div className="p-3 bg-zinc-900 border border-zinc-800 rounded-xl text-xs text-zinc-400 text-center leading-relaxed">
+                  Empezás con pistas de <span className="text-orange-400 font-bold">5s</span>.<br/>
+                  Cada <span className="text-orange-400 font-bold">5 aciertos</span> el tiempo baja 1s (mínimo 1s).<br/>
+                  <span className="text-red-400 font-bold">Fallás y se termina.</span>
+                </div>
+              </div>
+            )}
+
             <button
               onClick={startGame}
               disabled={songs.length < OPTIONS_COUNT}
@@ -361,18 +473,19 @@ export default function SongGuesser() {
             >
               {songs.length < OPTIONS_COUNT ? 'Cargando...' : 'Empezar juego'}
             </button>
+
             <div className="mt-6 grid grid-cols-3 gap-3 text-center text-xs text-zinc-500">
               <div className="bg-zinc-900 rounded-xl p-3">
                 <div className="text-lg mb-1">🎵</div>
-                <div>{TOTAL_ROUNDS} rondas</div>
+                <div>{mode === 'infinite' ? 'Sin límite' : `${TOTAL_ROUNDS} rondas`}</div>
               </div>
               <div className="bg-zinc-900 rounded-xl p-3">
                 <div className="text-lg mb-1">⏱️</div>
-                <div>Clip corto</div>
+                <div>{mode === 'infinite' ? 'Cada vez menos' : 'Clip corto'}</div>
               </div>
               <div className="bg-zinc-900 rounded-xl p-3">
                 <div className="text-lg mb-1">🏆</div>
-                <div>Puntuación</div>
+                <div>{mode === 'infinite' ? 'Récord' : 'Puntuación'}</div>
               </div>
             </div>
           </div>
@@ -386,16 +499,33 @@ export default function SongGuesser() {
             <div className="text-7xl mb-4">{goEmoji}</div>
             <h2 className="text-3xl font-black">{goTitle}</h2>
             <p className="mt-1 text-zinc-400">{goMsg}</p>
+
             <div className="my-8 bg-zinc-900 border border-zinc-800 rounded-2xl p-6">
               <div className="text-7xl font-black text-orange-400">{score}</div>
-              <div className="text-zinc-400 mt-1">de {TOTAL_ROUNDS} correctas</div>
-              {maxStreak > 1 && (
-                <div className="mt-3 text-sm text-zinc-500">
-                  Racha máxima{' '}
-                  <span className="text-orange-400 font-bold">{maxStreak} seguidas 🔥</span>
+              <div className="text-zinc-400 mt-1">
+                {mode === 'infinite' ? 'aciertos' : `de ${TOTAL_ROUNDS} correctas`}
+              </div>
+
+              {mode === 'infinite' ? (
+                <div className="mt-3 text-sm">
+                  {isNewRecord ? (
+                    <span className="text-orange-400 font-bold">¡Nuevo récord! 🎉</span>
+                  ) : (
+                    <span className="text-zinc-500">
+                      Récord <span className="text-orange-400 font-bold">{highScore}</span>
+                    </span>
+                  )}
                 </div>
+              ) : (
+                maxStreak > 1 && (
+                  <div className="mt-3 text-sm text-zinc-500">
+                    Racha máxima{' '}
+                    <span className="text-orange-400 font-bold">{maxStreak} seguidas 🔥</span>
+                  </div>
+                )
               )}
             </div>
+
             <div className="flex gap-3">
               <button
                 onClick={startGame}
@@ -431,21 +561,34 @@ export default function SongGuesser() {
                 {streak > 1 && <span className="text-orange-400 font-bold">🔥 {streak}</span>}
                 <span className="text-zinc-400">
                   <span className="text-white font-bold">{score}</span>
-                  {phase === 'revealed' ? `/${round + 1}` : `/${round}`} pts
+                  {mode === 'classic' && (phase === 'revealed' ? `/${round + 1}` : `/${round}`)}
+                  {' '}pts
                 </span>
               </div>
             </div>
 
-            {/* Progress bar */}
-            <div className="h-1 bg-zinc-800 rounded-full overflow-hidden mb-4">
-              <div
-                className="h-full bg-orange-500 rounded-full transition-all duration-500"
-                style={{ width: `${(round / TOTAL_ROUNDS) * 100}%` }}
-              />
-            </div>
-            <p className="text-center text-zinc-500 text-xs mb-5 uppercase tracking-widest">
-              Ronda <span className="text-white">{round + 1}</span> / {TOTAL_ROUNDS}
-            </p>
+            {/* Classic: progress bar */}
+            {mode === 'classic' && (
+              <>
+                <div className="h-1 bg-zinc-800 rounded-full overflow-hidden mb-4">
+                  <div
+                    className="h-full bg-orange-500 rounded-full transition-all duration-500"
+                    style={{ width: `${(round / TOTAL_ROUNDS) * 100}%` }}
+                  />
+                </div>
+                <p className="text-center text-zinc-500 text-xs mb-5 uppercase tracking-widest">
+                  Ronda <span className="text-white">{round + 1}</span> / {TOTAL_ROUNDS}
+                </p>
+              </>
+            )}
+
+            {/* Infinite: dynamic info */}
+            {mode === 'infinite' && (
+              <p className="text-center text-zinc-500 text-xs mb-5 uppercase tracking-widest">
+                Modo infinito · Pistas de{' '}
+                <span className="text-orange-400 font-bold">{currentSeconds}s</span>
+              </p>
+            )}
 
             {/* Album art */}
             {current && (
@@ -476,7 +619,7 @@ export default function SongGuesser() {
             {/* Playing */}
             {phase === 'playing' && (
               <div className="text-center animate-fade-up">
-                <CountdownRing timeLeft={timeLeft} total={diff.seconds} />
+                <CountdownRing timeLeft={timeLeft} total={currentSeconds} />
                 <p className="mt-2 text-zinc-500 text-sm">Escuchando...</p>
               </div>
             )}
@@ -540,7 +683,9 @@ export default function SongGuesser() {
                   onClick={nextRound}
                   className="w-full py-4 rounded-xl font-bold bg-orange-500 hover:bg-orange-400 transition-all active:scale-[0.98]"
                 >
-                  {round + 1 >= TOTAL_ROUNDS ? '🏆 Ver resultado' : 'Siguiente →'}
+                  {mode === 'classic'
+                    ? (round + 1 >= TOTAL_ROUNDS ? '🏆 Ver resultado' : 'Siguiente →')
+                    : (isCorrect ? 'Siguiente →' : '🏆 Ver resultado')}
                 </button>
               </div>
             )}
