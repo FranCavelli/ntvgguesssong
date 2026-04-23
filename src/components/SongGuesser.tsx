@@ -1,4 +1,5 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback } from 'react';
+import songsJson from '../data/songs.json';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -135,8 +136,8 @@ function OptionBtn({
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 export default function SongGuesser() {
-  const [songs,      setSongs]      = useState<Song[]>([]);
-  const [phase,      setPhase]      = useState<Phase>('loading');
+  const [songs,      setSongs]      = useState<Song[]>(songsJson as Song[]);
+  const [phase,      setPhase]      = useState<Phase>('home');
   const [diffId,     setDiffId]     = useState<DifficultyId>('normal');
   const [current,    setCurrent]    = useState<Song | null>(null);
   const [options,    setOptions]    = useState<Song[]>([]);
@@ -156,24 +157,7 @@ export default function SongGuesser() {
 
   const diff = DIFFICULTIES.find(d => d.id === diffId)!;
 
-  // ── Fetch songs on mount ───────────────────────────────────────────────────
-
-  useEffect(() => {
-    (async () => {
-      try {
-        // songs.json is in /public — served at the site root (base-path-aware via import.meta.env.BASE_URL)
-        const res = await fetch(`${import.meta.env.BASE_URL}songs.json`);
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const list: Song[] = await res.json();
-        if (list.length < OPTIONS_COUNT) throw new Error('Pocas canciones disponibles');
-        setSongs(list);
-        setPhase('home');
-      } catch (e) {
-        setError(e instanceof Error ? e.message : 'Error al cargar canciones');
-        setPhase('home');
-      }
-    })();
-  }, []);
+  // Songs are bundled at build time via the JSON import — no fetch needed
 
   // ── Audio ─────────────────────────────────────────────────────────────────
 
