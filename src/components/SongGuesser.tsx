@@ -33,6 +33,7 @@ const INFINITE_START_SECONDS = 5;
 const INFINITE_MIN_SECONDS   = 1;
 const INFINITE_STEP          = 5; // aciertos necesarios para bajar 1s
 const HIGH_SCORE_KEY         = 'ntvg-infinite-highscore';
+const CLASSIC_HIGH_SCORE_KEY = 'ntvg-classic-highscore';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -166,6 +167,7 @@ export default function SongGuesser() {
   const [error,      setError]      = useState<string | null>(null);
   const [usedIds,    setUsedIds]    = useState<Set<number>>(new Set());
   const [highScore,  setHighScore]  = useState(0);
+  const [classicHighScore, setClassicHighScore] = useState(0);
   const [isNewRecord, setIsNewRecord] = useState(false);
   const [topScores,    setTopScores]    = useState<ScoreEntry[]>([]);
   const [loadingTop,   setLoadingTop]   = useState(false);
@@ -180,13 +182,25 @@ export default function SongGuesser() {
 
   const diff = DIFFICULTIES.find(d => d.id === diffId)!;
 
-  // Load high score once on mount
+  // Load high scores once on mount
   useEffect(() => {
     try {
-      const saved = localStorage.getItem(HIGH_SCORE_KEY);
-      if (saved) setHighScore(parseInt(saved, 10) || 0);
+      const savedInf = localStorage.getItem(HIGH_SCORE_KEY);
+      if (savedInf) setHighScore(parseInt(savedInf, 10) || 0);
+      const savedCls = localStorage.getItem(CLASSIC_HIGH_SCORE_KEY);
+      if (savedCls) setClassicHighScore(parseInt(savedCls, 10) || 0);
     } catch {}
   }, []);
+
+  // Persist classic high score on gameover
+  useEffect(() => {
+    if (phase === 'gameover' && mode === 'classic' && score > classicHighScore) {
+      setClassicHighScore(score);
+      try { localStorage.setItem(CLASSIC_HIGH_SCORE_KEY, String(score)); } catch {}
+    }
+  }, [phase, mode, score, classicHighScore]);
+
+  const overallHighScore = Math.max(highScore, classicHighScore);
 
   const fetchTopScores = useCallback(async () => {
     setLoadingTop(true);
@@ -547,7 +561,7 @@ export default function SongGuesser() {
               </div>
               <div className="bg-zinc-900 rounded-xl p-3">
                 <div className="text-lg mb-1">🏆</div>
-                <div>{mode === 'infinite' ? 'Récord' : 'Puntuación'}</div>
+                <div className="text-[10px] text-zinc-600 mt-0.5">Récord <span className="text-orange-400 font-bold tabular-nums">{overallHighScore}</span></div>
               </div>
             </div>
           </div>
