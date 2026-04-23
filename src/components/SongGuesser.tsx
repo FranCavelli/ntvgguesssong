@@ -406,14 +406,14 @@ export default function SongGuesser() {
   const [goEmoji, goTitle, goMsg] =
     mode === 'infinite'
       ? (score >= 20 ? ['👑', '¡Leyenda!',       'Dominás el repertorio']
-        : score >= 10 ? ['🌟', '¡Muy bien!',       'Buen oído para NTVG']
+        : score >= 10 ? ['🌟', '¡Muy bien!',       'Buen oído']
         : score >=  5 ? ['🎵', 'Nada mal',         'Podés mejorar tu récord']
         : score >    0 ? ['😎', 'Seguí probando',   'La próxima salís más lejos']
         :                ['💀', 'Ouch',             'Arrancamos mal, pero dale de nuevo'])
-      : (pct === 1  ? ['🏆', '¡Perfecto!',       'Sos un verdadero fanático de NTVG']
+      : (pct === 1  ? ['🏆', '¡Perfecto!',       'Sos un verdadero fanático']
       :  pct >= 0.8 ? ['🌟', '¡Excelente!',      'Conocés muy bien la discografía']
       :  pct >= 0.6 ? ['👏', '¡Bien!',           'Buen conocimiento musical']
-      :  pct >= 0.4 ? ['😎', 'Pasable',          'Hay que escuchar más NTVG']
+      :  pct >= 0.4 ? ['😎', 'Pasable',          'Hay que escuchar más']
       :               ['🎵', 'Seguí intentando', 'Ponete los auriculares y practicá']);
 
   return (
