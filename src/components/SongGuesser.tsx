@@ -1,5 +1,6 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import songsJson from '../data/songs.json';
+import { getTopScores, submitScore, type ScoreEntry } from '../lib/firebase';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -166,6 +167,12 @@ export default function SongGuesser() {
   const [usedIds,    setUsedIds]    = useState<Set<number>>(new Set());
   const [highScore,  setHighScore]  = useState(0);
   const [isNewRecord, setIsNewRecord] = useState(false);
+  const [topScores,    setTopScores]    = useState<ScoreEntry[]>([]);
+  const [loadingTop,   setLoadingTop]   = useState(false);
+  const [playerName,   setPlayerName]   = useState('');
+  const [savingScore,  setSavingScore]  = useState(false);
+  const [scoreSaved,   setScoreSaved]   = useState(false);
+  const [saveError,    setSaveError]    = useState<string | null>(null);
 
   const audioRef = useRef<HTMLAudioElement>(null);
   const stopRef  = useRef<number | undefined>(undefined);
@@ -180,6 +187,40 @@ export default function SongGuesser() {
       if (saved) setHighScore(parseInt(saved, 10) || 0);
     } catch {}
   }, []);
+
+  const fetchTopScores = useCallback(async () => {
+    setLoadingTop(true);
+    try {
+      const scores = await getTopScores(5);
+      setTopScores(scores);
+    } catch (e) {
+      console.error('No se pudo cargar el ranking', e);
+    } finally {
+      setLoadingTop(false);
+    }
+  }, []);
+
+  // Load leaderboard on mount
+  useEffect(() => {
+    fetchTopScores();
+  }, [fetchTopScores]);
+
+  const handleSubmitScore = useCallback(async () => {
+    const name = playerName.trim();
+    if (!name || savingScore || scoreSaved) return;
+    setSavingScore(true);
+    setSaveError(null);
+    try {
+      await submitScore(name, score);
+      setScoreSaved(true);
+      await fetchTopScores();
+    } catch (e) {
+      console.error(e);
+      setSaveError('No se pudo guardar el puntaje. Probá de nuevo.');
+    } finally {
+      setSavingScore(false);
+    }
+  }, [playerName, savingScore, scoreSaved, score, fetchTopScores]);
 
   // ── Audio ─────────────────────────────────────────────────────────────────
 
@@ -280,6 +321,9 @@ export default function SongGuesser() {
     setStreak(0);
     setMaxStreak(0);
     setIsNewRecord(false);
+    setScoreSaved(false);
+    setPlayerName('');
+    setSaveError(null);
     launchRound(songs, 0, new Set<number>(), 0);
   }, [songs, launchRound]);
 
@@ -446,17 +490,35 @@ export default function SongGuesser() {
               </div>
             )}
 
-            {/* Infinite: rules + record */}
+            {/* Infinite: leaderboard + rules */}
             {mode === 'infinite' && (
               <div className="mb-8 space-y-3">
-                <div className="p-4 bg-gradient-to-br from-orange-950/40 to-zinc-900 border border-orange-900/50 rounded-xl text-center">
-                  <div className="text-xs text-zinc-500 uppercase tracking-widest mb-1">
-                    Récord
+                <div className="p-4 bg-gradient-to-br from-orange-950/40 to-zinc-900 border border-orange-900/50 rounded-xl">
+                  <div className="text-xs text-zinc-500 uppercase tracking-widest mb-3 text-center">
+                    🏆 Top 5
                   </div>
-                  <div className="text-4xl font-black text-orange-400 tabular-nums">
-                    {highScore}
-                  </div>
-                  <div className="text-xs text-zinc-500 mt-0.5">aciertos seguidos</div>
+                  {loadingTop ? (
+                    <div className="text-center text-zinc-500 text-sm py-4">Cargando...</div>
+                  ) : topScores.length === 0 ? (
+                    <div className="text-center text-zinc-500 text-sm py-4">
+                      Nadie jugó todavía. ¡Sé el primero!
+                    </div>
+                  ) : (
+                    <ol className="space-y-1">
+                      {topScores.map((entry, i) => (
+                        <li
+                          key={entry.id}
+                          className="flex items-center justify-between py-1.5 px-2 rounded-lg bg-zinc-900/50"
+                        >
+                          <div className="flex items-center gap-2 min-w-0">
+                            <span className="text-orange-400 font-bold w-5 tabular-nums">{i + 1}.</span>
+                            <span className="truncate text-sm font-semibold">{entry.name}</span>
+                          </div>
+                          <span className="text-orange-400 font-black tabular-nums">{entry.score}</span>
+                        </li>
+                      ))}
+                    </ol>
+                  )}
                 </div>
                 <div className="p-3 bg-zinc-900 border border-zinc-800 rounded-xl text-xs text-zinc-400 text-center leading-relaxed">
                   Empezás con pistas de <span className="text-orange-400 font-bold">5s</span>.<br/>
@@ -509,10 +571,10 @@ export default function SongGuesser() {
               {mode === 'infinite' ? (
                 <div className="mt-3 text-sm">
                   {isNewRecord ? (
-                    <span className="text-orange-400 font-bold">¡Nuevo récord! 🎉</span>
+                    <span className="text-orange-400 font-bold">¡Nuevo récord personal! 🎉</span>
                   ) : (
                     <span className="text-zinc-500">
-                      Récord <span className="text-orange-400 font-bold">{highScore}</span>
+                      Tu mejor <span className="text-orange-400 font-bold">{highScore}</span>
                     </span>
                   )}
                 </div>
@@ -525,6 +587,41 @@ export default function SongGuesser() {
                 )
               )}
             </div>
+
+            {/* Infinite: save score */}
+            {mode === 'infinite' && score > 0 && !scoreSaved && (
+              <div className="mb-6 p-4 bg-zinc-900 border border-zinc-800 rounded-xl">
+                <p className="text-sm text-zinc-400 mb-3">Guardá tu puntaje en el ranking</p>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={playerName}
+                    onChange={e => setPlayerName(e.target.value.slice(0, 20))}
+                    placeholder="Tu nombre"
+                    maxLength={20}
+                    className="flex-1 bg-zinc-800 border border-zinc-700 rounded-xl px-3 py-2 text-white placeholder:text-zinc-500 focus:outline-none focus:border-orange-500"
+                    onKeyDown={e => { if (e.key === 'Enter') handleSubmitScore(); }}
+                    disabled={savingScore}
+                  />
+                  <button
+                    onClick={handleSubmitScore}
+                    disabled={!playerName.trim() || savingScore}
+                    className="px-4 py-2 rounded-xl font-bold bg-orange-500 hover:bg-orange-400 disabled:bg-zinc-800 disabled:text-zinc-600 transition-all"
+                  >
+                    {savingScore ? '...' : 'Guardar'}
+                  </button>
+                </div>
+                {saveError && (
+                  <p className="mt-2 text-xs text-red-400">{saveError}</p>
+                )}
+              </div>
+            )}
+
+            {mode === 'infinite' && scoreSaved && (
+              <div className="mb-6 p-4 bg-emerald-950/50 border border-emerald-700 rounded-xl text-center text-emerald-400 font-bold">
+                ✓ ¡Puntaje guardado!
+              </div>
+            )}
 
             <div className="flex gap-3">
               <button
