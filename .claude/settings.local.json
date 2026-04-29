@@ -3,7 +3,8 @@
     "allow": [
       "Bash(npm install *)",
       "Bash(npm run *)",
-      "Bash(npm uninstall *)"
+      "Bash(npm uninstall *)",
+      "WebFetch(domain:ntvgguesssong.vercel.app)"
     ]
   }
 }
