@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640">
+    <rect width="640" height="640" fill="#09090b"/>
+    <g transform="translate(64,64)">
+        <text x="256" y="270" font-family="Arial Black, Roboto, Impact, sans-serif" font-weight="900" font-size="148" fill="#ffffff" text-anchor="middle" letter-spacing="-4">NTVG</text>
+        <g fill="#f97316">
+            <rect x="186" y="356" width="18" height="40" rx="4"/>
+            <rect x="214" y="340" width="18" height="72" rx="4"/>
+            <rect x="242" y="324" width="18" height="104" rx="4"/>
+            <rect x="270" y="340" width="18" height="72" rx="4"/>
+            <rect x="298" y="356" width="18" height="40" rx="4"/>
+        </g>
+    </g>
+</svg>
